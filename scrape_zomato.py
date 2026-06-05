@@ -1,88 +1,87 @@
-import requests
 import json
 import time
+import os
 
-# HOW TO GET THIS:
-# 1. Open Chrome, go to zomato.com, log in
-# 2. Press F12 -> Network tab -> go to Orders page on Zomato
-# 3. Click any request with "orders" in the name
-# 4. Scroll to "Request Headers" -> find the "cookie:" line
-# 5. Copy the ENTIRE value and paste it below between the triple quotes
-COOKIE_STRING = """PASTE_ENTIRE_COOKIE_STRING_HERE"""
+try:
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+except ImportError:
+    print("Installing selenium...")
+    os.system("pip install selenium")
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
 
-def parse_cookie_string(cookie_str):
-    cookies = {}
-    for part in cookie_str.strip().split(";"):
-        part = part.strip()
-        if "=" in part:
-            key, _, value = part.partition("=")
-            cookies[key.strip()] = value.strip()
-    return cookies
+folder = r"c:\Users\SRUTHI\OneDrive - NATIONAL INSTITUTE OF TECHNOLOGY HAMIRPUR HP\Desktop\New folder"
 
-COOKIES = parse_cookie_string(COOKIE_STRING)
+options = Options()
+options.add_argument("--start-maximized")
 
-session = requests.Session()
-session.cookies.update(COOKIES)
-session.headers.update({
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Referer": "https://www.zomato.com/orders",
-    "Accept": "application/json, text/plain, */*",
-    "x-zomato-csrft": COOKIES.get("csrf", ""),
-})
+print("Opening a new Chrome window...")
+driver = webdriver.Chrome(options=options)
+driver.get("https://www.zomato.com")
 
-def fetch_orders(page=1):
-    url = f"https://www.zomato.com/webroutes/user/orders?page={page}"
-    response = session.get(url)
-    print(f"  Status: {response.status_code}")
-    if response.status_code == 200:
-        try:
-            return response.json()
-        except Exception:
-            print(f"  Could not parse JSON: {response.text[:300]}")
-            return None
-    else:
-        print(f"  Error {response.status_code}: {response.text[:300]}")
-        return None
+print("\nPlease log into Zomato in the browser that just opened.")
+input("Press ENTER here once you are logged in...\n")
 
-all_orders = []
+all_orders = {}
+total_pages = None
 page = 1
 
-while True:
-    print(f"Fetching page {page}...")
-    data = fetch_orders(page)
+try:
+    while True:
+        url = f"https://www.zomato.com/webroutes/user/orders?page={page}"
+        print(f"Fetching page {page}{f' of {total_pages}' if total_pages else ''}...")
+        driver.get(url)
+        time.sleep(2)
 
-    if not data:
-        break
+        # Get the raw JSON text from the page
+        raw = driver.execute_script("return document.body.innerText")
 
-    # Zomato wraps orders in sections
-    section = data.get("sections", {}).get("SECTION_USER_ORDER_HISTORY", {})
-    order_entities = section.get("entities", {}).get("ORDER", {})
-    order_history = section.get("orderHistory", [])
+        try:
+            data = json.loads(raw)
+        except Exception:
+            print(f"  Could not parse JSON on page {page}. Raw: {raw[:200]}")
+            break
 
-    if not order_history:
-        print("No more orders found.")
-        break
+        section = data.get("sections", {}).get("SECTION_USER_ORDER_HISTORY", {})
+        order_entities = data.get("entities", {}).get("ORDER", {})
 
-    # Attach full order details from entities
-    for entry in order_history:
-        order_id = str(entry.get("entityId", ""))
-        order_detail = order_entities.get(order_id, {})
-        merged = {**entry, **order_detail}
-        all_orders.append(merged)
+        if total_pages is None:
+            total_pages = section.get("totalPages", 1)
+            print(f"  Total pages: {total_pages}")
 
-    print(f"  Got {len(order_history)} orders | Total so far: {len(all_orders)}")
+        if not order_entities:
+            print("  No orders on this page.")
+            break
 
-    if len(order_history) < 10:
-        print("Last page reached.")
-        break
+        all_orders.update(order_entities)
+        print(f"  Got {len(order_entities)} orders | Total so far: {len(all_orders)}")
 
-    page += 1
-    time.sleep(1)
+        if page >= total_pages:
+            print("All pages fetched.")
+            break
 
-output = {"orders": all_orders}
-output_path = r"c:\Users\SRUTHI\OneDrive - NATIONAL INSTITUTE OF TECHNOLOGY HAMIRPUR HP\Desktop\New folder\zomato_input.json"
+        page += 1
+        time.sleep(1)
+
+finally:
+    driver.quit()
+
+output = {
+    "sections": {
+        "SECTION_USER_ORDER_HISTORY": {
+            "count": len(all_orders),
+            "totalPages": total_pages,
+        }
+    },
+    "entities": {
+        "ORDER": all_orders
+    }
+}
+
+output_path = os.path.join(folder, "zomato.html")
 with open(output_path, "w", encoding="utf-8") as f:
     json.dump(output, f, ensure_ascii=False, indent=2)
 
-print(f"\nDone! {len(all_orders)} total orders saved to zomato_input.json")
+print(f"\nDone! {len(all_orders)} total orders saved to zomato.html")
 print("Now run zomato_to_csv.py to generate the CSV.")
