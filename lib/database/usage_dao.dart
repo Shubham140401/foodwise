@@ -19,6 +19,17 @@ class UsageDao {
     return rows.map(UsageSession.fromMap).toList();
   }
 
+  Future<void> markOrderPlaced(String app, DateTime date) async {
+    final db = await _db.db;
+    final dateStr = date.toIso8601String().split('T').first;
+    await db.update(
+      'usage_sessions',
+      {'order_placed': 1},
+      where: 'date = ? AND app = ?',
+      whereArgs: [dateStr, app],
+    );
+  }
+
   Future<List<UsageSession>> getRecent({int days = 7}) async {
     final db = await _db.db;
     final cutoff = DateTime.now().subtract(Duration(days: days)).toIso8601String().split('T').first;

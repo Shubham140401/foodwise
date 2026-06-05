@@ -100,14 +100,26 @@ class AccessibilityDataService {
     }
   }
 
-  // Listen for real-time updates broadcast from the accessibility service
-  void listenForUpdates(void Function(AppLiveData) onData) {
+  // Listen for real-time screen scrape updates AND order confirmation events.
+  // onData fires when restaurant/coupon data is scraped.
+  // onOrderConfirmed fires when "Order Placed" screen is detected in a food app.
+  void listenForUpdates(
+    void Function(AppLiveData) onData, {
+    void Function(String app, DateTime at)? onOrderConfirmed,
+  }) {
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'onFoodData') {
         try {
           final json = call.arguments as String;
           final map = jsonDecode(json) as Map<String, dynamic>;
           onData(AppLiveData.fromMap(map));
+        } catch (_) {}
+      } else if (call.method == 'onOrderConfirmed') {
+        try {
+          final args = Map<String, dynamic>.from(call.arguments as Map);
+          final app = args['app'] as String;
+          final ts = args['timestamp'] as int;
+          onOrderConfirmed?.call(app, DateTime.fromMillisecondsSinceEpoch(ts));
         } catch (_) {}
       }
     });

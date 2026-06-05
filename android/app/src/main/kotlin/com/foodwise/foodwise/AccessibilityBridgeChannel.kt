@@ -18,6 +18,7 @@ class AccessibilityBridgeChannel(
     }
 
     private var receiver: BroadcastReceiver? = null
+    private var orderReceiver: BroadcastReceiver? = null
     private val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
 
     init {
@@ -57,11 +58,27 @@ class AccessibilityBridgeChannel(
         } else {
             context.registerReceiver(receiver, filter)
         }
+
+        orderReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                val app = intent?.getStringExtra(FoodwiseAccessibilityService.EXTRA_APP) ?: return
+                val ts = intent.getLongExtra(FoodwiseAccessibilityService.EXTRA_TIMESTAMP, System.currentTimeMillis())
+                channel.invokeMethod("onOrderConfirmed", mapOf("app" to app, "timestamp" to ts))
+            }
+        }
+        val orderFilter = IntentFilter(FoodwiseAccessibilityService.ACTION_ORDER_CONFIRMED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(orderReceiver, orderFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            context.registerReceiver(orderReceiver, orderFilter)
+        }
     }
 
     fun stopListening() {
         receiver?.let { context.unregisterReceiver(it) }
         receiver = null
+        orderReceiver?.let { context.unregisterReceiver(it) }
+        orderReceiver = null
     }
 
     private fun isAccessibilityEnabled(): Boolean {

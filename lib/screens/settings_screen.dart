@@ -6,6 +6,7 @@ import '../database/preferences_dao.dart';
 import '../models/preference.dart';
 import '../services/app_mode.dart';
 import '../services/llm_service.dart';
+import 'import_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -221,6 +222,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
               labelText: 'Work address',
               prefixIcon: Icon(Icons.work_outline),
               border: OutlineInputBorder(),
+            ),
+          ),
+
+          // ── Order history import ─────────────────────────────────────────
+          const SizedBox(height: 24),
+          Text('Order history', style: theme.textTheme.titleSmall),
+          const SizedBox(height: 8),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.upload_file_outlined),
+            title: const Text('Import from Swiggy / Zomato CSV'),
+            subtitle: const Text('Trains the agent on your past orders'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ImportScreen()),
             ),
           ),
         ],

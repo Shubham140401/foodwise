@@ -12,6 +12,29 @@ class OrdersDao {
     await db.insert('orders', order.toMap(), conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
+  // Bulk-insert, skipping duplicates. Returns the number of new rows inserted.
+  Future<int> insertBatch(List<Order> orders) async {
+    final db = await _db.db;
+    int inserted = 0;
+    await db.transaction((txn) async {
+      for (final order in orders) {
+        final rows = await txn.insert(
+          'orders',
+          order.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+        inserted += rows;
+      }
+    });
+    return inserted;
+  }
+
+  Future<int> count() async {
+    final db = await _db.db;
+    final result = await db.rawQuery('SELECT COUNT(*) as c FROM orders');
+    return (result.first['c'] as int?) ?? 0;
+  }
+
   Future<List<Order>> getRecent({int limit = 20}) async {
     final db = await _db.db;
     final rows = await db.query('orders', orderBy: 'ordered_at DESC', limit: limit);

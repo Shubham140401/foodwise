@@ -18,12 +18,37 @@ class FoodwiseAccessibilityService : AccessibilityService() {
             "com.blinkit.consumer" to "Blinkit"
         )
 
-        // Broadcast action Flutter listens to via a background isolate
+        // Broadcast actions Flutter listens to
         const val ACTION_FOOD_DATA = "com.foodwise.FOOD_DATA"
+        const val ACTION_ORDER_CONFIRMED = "com.foodwise.ORDER_CONFIRMED"
         const val EXTRA_JSON = "json"
+        const val EXTRA_APP = "app"
+        const val EXTRA_TIMESTAMP = "timestamp"
 
         // Shared state — last scraped data per app
         val latestData = mutableMapOf<String, AppScreenData>()
+
+        // Order confirmation strings per app (lower-cased for matching)
+        private val ORDER_CONFIRMATION_STRINGS = mapOf(
+            "Swiggy" to listOf(
+                "order placed", "your order has been placed",
+                "order is confirmed", "your order is confirmed",
+                "arriving in", "out for delivery", "order accepted"
+            ),
+            "Zomato" to listOf(
+                "order placed", "order confirmed", "your order is confirmed",
+                "restaurant is preparing", "out for delivery",
+                "order is on its way", "rider is on the way"
+            ),
+            "Blinkit" to listOf(
+                "order placed", "order confirmed", "your order is confirmed",
+                "store is picking", "out for delivery"
+            )
+        )
+
+        // Debounce: don't fire the same confirmation twice within 5 minutes
+        private val lastConfirmedAt = mutableMapOf<String, Long>()
+        private const val CONFIRM_DEBOUNCE_MS = 5 * 60 * 1000L
     }
 
     data class AppScreenData(
@@ -59,7 +84,15 @@ class FoodwiseAccessibilityService : AccessibilityService() {
         val appName = FOOD_APPS[pkg] ?: return
 
         val root = rootInActiveWindow ?: return
-        val data = scrapeScreen(appName, root)
+        val allText = mutableListOf<String>()
+        collectAllText(root, allText)
+
+        // Check for order confirmation before general scraping
+        if (isOrderConfirmation(appName, allText)) {
+            broadcastOrderConfirmed(appName)
+        }
+
+        val data = scrapeScreen(appName, root, allText)
         root.recycle()
 
         if (data.restaurants.isNotEmpty() || data.coupons.isNotEmpty()) {
@@ -68,15 +101,39 @@ class FoodwiseAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun scrapeScreen(app: String, root: AccessibilityNodeInfo): AppScreenData {
-        val allText = mutableListOf<String>()
-        collectAllText(root, allText)
-
-        val restaurants = parseRestaurants(app, allText)
-        val coupons = parseCoupons(allText)
-        val banners = parseBanners(allText)
-
+    private fun scrapeScreen(
+        app: String,
+        root: AccessibilityNodeInfo,
+        allText: List<String> = emptyList()
+    ): AppScreenData {
+        val texts = if (allText.isNotEmpty()) allText else mutableListOf<String>().also {
+            collectAllText(root, it)
+        }
+        val restaurants = parseRestaurants(app, texts)
+        val coupons = parseCoupons(texts)
+        val banners = parseBanners(texts)
         return AppScreenData(app, restaurants, coupons, banners)
+    }
+
+    private fun isOrderConfirmation(app: String, texts: List<String>): Boolean {
+        val now = System.currentTimeMillis()
+        val last = lastConfirmedAt[app] ?: 0L
+        if (now - last < CONFIRM_DEBOUNCE_MS) return false
+
+        val patterns = ORDER_CONFIRMATION_STRINGS[app] ?: return false
+        val joined = texts.joinToString(" ").lowercase()
+        val matched = patterns.any { joined.contains(it) }
+        if (matched) lastConfirmedAt[app] = now
+        return matched
+    }
+
+    private fun broadcastOrderConfirmed(app: String) {
+        val intent = Intent(ACTION_ORDER_CONFIRMED).apply {
+            putExtra(EXTRA_APP, app)
+            putExtra(EXTRA_TIMESTAMP, System.currentTimeMillis())
+            setPackage(packageName)
+        }
+        sendBroadcast(intent)
     }
 
     private fun collectAllText(node: AccessibilityNodeInfo, result: MutableList<String>) {

@@ -50,10 +50,10 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _accessibilitySvc = AccessibilityDataService();
-    // Listen for real-time scrape updates while the screen is open
-    _accessibilitySvc.listenForUpdates((data) {
-      setState(() => _liveData[data.app] = data);
-    });
+    _accessibilitySvc.listenForUpdates(
+      (data) => setState(() => _liveData[data.app] = data),
+      onOrderConfirmed: _handleOrderConfirmed,
+    );
     _load();
   }
 
@@ -219,6 +219,11 @@ class _HomeScreenState extends State<HomeScreen> {
         okAddons: [],
         paymentMethods: [],
       );
+
+  Future<void> _handleOrderConfirmed(String app, DateTime at) async {
+    final usageDao = context.read<UsageDao>();
+    await usageDao.markOrderPlaced(app, at);
+  }
 
   Future<void> _logFeedback(String satisfaction) async {
     final feedbackDao = context.read<FeedbackDao>();
