@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_description">foodwise reads Swiggy, Zomato and Blinkit screens to compare live prices and find the best deal for you. No data is sent to any server.</string>
+</resources>
