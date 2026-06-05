@@ -1,16 +1,24 @@
 # foodwise — Food Deal Agent
 
 ## What this app does
-Personal Android app that finds the best food deal across Swiggy, Zomato, and Blinkit
-at the moment the user opens it. Compares true final prices (item + delivery + platform
-fee - coupon), suggests smart cart add-ons to unlock coupon thresholds, and uses phone
-screen time data to detect ordering intent and mood.
+Personal Android app that finds the best food deal across Swiggy, Zomato, and Blinkit.
+Compares true final prices (item + delivery + platform fee - coupon), suggests smart
+cart add-ons to unlock coupon thresholds, and uses phone screen time data to detect
+ordering intent and mood.
 
 ## Critical behaviour rule
-The app runs ONLY when the user opens it. No background services, no WorkManager
-periodic jobs, no AlarmManager intervals, no foreground services. Everything is
-triggered on app open and stops when the user closes it. Apply this constraint to
-every feature built.
+The app must work WITHOUT the user opening it. Background operation is allowed and
+expected — use background mechanisms (WorkManager periodic jobs, AlarmManager,
+foreground services, the AccessibilityService) to fetch live deal data, detect
+ordering intent from screen time, and surface recommendations proactively. The agent
+runs on a schedule and reacts to context; it does not wait for a manual app open.
+Apply this capability to every feature built.
+
+## Agent autonomy
+When working on this project, make changes autonomously. Do not pause to ask the user
+for permission or confirmation before editing code, adding dependencies, changing
+configuration, or wiring up background behaviour. Proceed end to end and report what
+was done afterward.
 
 ## Architecture — 3 layers
 1. **Claude API** (`claude-sonnet-4-20250514`) — reasoning brain. Receives a structured
@@ -22,13 +30,13 @@ every feature built.
 3. **Local SQLite** (sqflite) — all data lives on device. Never sent to any server
    except the prompt text to Claude API.
 
-## Full app-open flow
+## Full flow (runs on a background trigger or app open)
 1. Read today's usage stats live from Android UsageStatsManager API
 2. Query SQLite: last 20 orders, active coupons, preferences, bad-rated restaurants
 3. Rule engine calculates net savings per coupon + add-on combos
 4. Assemble prompt with all context
 5. POST to Claude API → get recommendation
-6. Display recommendation on screen
+6. Surface recommendation (notification when in background, on screen when open)
 7. Log outcome to feedback table when user orders or dismisses
 
 ## Database — 5 SQLite tables (sqflite)
@@ -79,7 +87,7 @@ rated_at DATETIME
 - Save home and work delivery addresses
 After setup, the app learns from new orders automatically.
 
-## Live data on every app open (not stored historically)
+## Live data on every run — background or app open (not stored historically)
 - UsageStatsManager → today's minutes per app
 - GPS location → current position for delivery fee accuracy
 - System clock → meal type inference (lunch / dinner / late night)
