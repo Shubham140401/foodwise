@@ -1,73 +1,46 @@
 import 'dart:convert';
 
 class Preference {
-  final String dietType;
-  final List<String> favCuisines;
-  final List<String> avoidItems;
-  final int maxSpendLunch;
-  final int maxSpendDinner;
-  final List<String> okAddons;
-  final List<String> paymentMethods;
-  final String? homeAddress;
-  final String? workAddress;
+  final String dietType; // 'none' | 'vegetarian' | 'vegan' | 'non-vegetarian'
+  final int numPeople;
+  final List<String> peoplePreferences; // one free-text note per person
+  final List<String> bankCards; // e.g. ['HDFC', 'Axis'] — used to match credit-card coupons
 
   const Preference({
     required this.dietType,
-    required this.favCuisines,
-    required this.avoidItems,
-    required this.maxSpendLunch,
-    required this.maxSpendDinner,
-    required this.okAddons,
-    required this.paymentMethods,
-    this.homeAddress,
-    this.workAddress,
+    required this.numPeople,
+    required this.peoplePreferences,
+    this.bankCards = const [],
   });
 
   factory Preference.fromMap(Map<String, dynamic> map) => Preference(
         dietType: map['diet_type'] as String,
-        favCuisines: List<String>.from(jsonDecode(map['fav_cuisines'] as String)),
-        avoidItems: List<String>.from(jsonDecode(map['avoid_items'] as String)),
-        maxSpendLunch: map['max_spend_lunch'] as int,
-        maxSpendDinner: map['max_spend_dinner'] as int,
-        okAddons: List<String>.from(jsonDecode(map['ok_addons'] as String)),
-        paymentMethods: List<String>.from(jsonDecode(map['payment_methods'] as String)),
-        homeAddress: map['home_address'] as String?,
-        workAddress: map['work_address'] as String?,
+        numPeople: map['num_people'] as int,
+        peoplePreferences: List<String>.from(
+            jsonDecode(map['people_prefs'] as String)),
+        bankCards: map['bank_cards'] != null
+            ? List<String>.from(jsonDecode(map['bank_cards'] as String))
+            : [],
       );
 
   Map<String, dynamic> toMap() => {
         'id': 1,
         'diet_type': dietType,
-        'fav_cuisines': jsonEncode(favCuisines),
-        'avoid_items': jsonEncode(avoidItems),
-        'max_spend_lunch': maxSpendLunch,
-        'max_spend_dinner': maxSpendDinner,
-        'ok_addons': jsonEncode(okAddons),
-        'payment_methods': jsonEncode(paymentMethods),
-        'home_address': homeAddress,
-        'work_address': workAddress,
+        'num_people': numPeople,
+        'people_prefs': jsonEncode(peoplePreferences),
+        'bank_cards': jsonEncode(bankCards),
       };
 
   Preference copyWith({
     String? dietType,
-    List<String>? favCuisines,
-    List<String>? avoidItems,
-    int? maxSpendLunch,
-    int? maxSpendDinner,
-    List<String>? okAddons,
-    List<String>? paymentMethods,
-    String? homeAddress,
-    String? workAddress,
+    int? numPeople,
+    List<String>? peoplePreferences,
+    List<String>? bankCards,
   }) =>
       Preference(
         dietType: dietType ?? this.dietType,
-        favCuisines: favCuisines ?? this.favCuisines,
-        avoidItems: avoidItems ?? this.avoidItems,
-        maxSpendLunch: maxSpendLunch ?? this.maxSpendLunch,
-        maxSpendDinner: maxSpendDinner ?? this.maxSpendDinner,
-        okAddons: okAddons ?? this.okAddons,
-        paymentMethods: paymentMethods ?? this.paymentMethods,
-        homeAddress: homeAddress ?? this.homeAddress,
-        workAddress: workAddress ?? this.workAddress,
+        numPeople: numPeople ?? this.numPeople,
+        peoplePreferences: peoplePreferences ?? this.peoplePreferences,
+        bankCards: bankCards ?? this.bankCards,
       );
 }

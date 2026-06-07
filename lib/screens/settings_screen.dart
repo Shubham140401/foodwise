@@ -6,6 +6,7 @@ import '../database/preferences_dao.dart';
 import '../models/preference.dart';
 import '../services/app_mode.dart';
 import '../services/llm_service.dart';
+import 'coupons_screen.dart';
 import 'import_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -16,10 +17,6 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final _homeController = TextEditingController();
-  final _workController = TextEditingController();
-
-  // One controller per provider so the user can type all keys before saving.
   final Map<String, TextEditingController> _keyControllers = {
     for (final p in kAllProviders) p: TextEditingController(),
   };
@@ -30,7 +27,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _recMode = kRecModeStatic;
   String _provider = kProviderClaude;
   bool _saving = false;
-  Preference? _prefs;
+
+  // Preferences state
+  String _dietType = 'none';
+  int _numPeople = 1;
+  List<TextEditingController> _prefControllers = [TextEditingController()];
+  final Set<String> _selectedCards = {};
+
+  static const _dietOptions = ['none', 'vegetarian', 'vegan', 'non-vegetarian'];
+  static const _bankOptions = [
+    'HDFC', 'ICICI', 'SBI', 'Axis', 'Kotak',
+    'Yes Bank', 'IDFC First', 'IndusInd', 'Citibank', 'AMEX',
+  ];
+  final _dietLabels = {
+    'none': 'Everything',
+    'vegetarian': 'Vegetarian',
+    'vegan': 'Vegan',
+    'non-vegetarian': 'Non-veg',
+  };
 
   @override
   void initState() {
@@ -40,7 +54,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _load() async {
     final sp = await SharedPreferences.getInstance();
-    // Load all stored keys in parallel.
     final keyFutures = {
       for (final p in kAllProviders) p: LlmService.getApiKey(p),
     };
@@ -53,11 +66,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _recMode = sp.getString(kRecModeKey) ?? kRecModeStatic;
       _provider = sp.getString(kLlmProviderKey) ?? kProviderClaude;
-      _prefs = prefs;
-      _homeController.text = prefs?.homeAddress ?? '';
-      _workController.text = prefs?.workAddress ?? '';
+      if (prefs != null) {
+        _dietType = prefs.dietType;
+        _numPeople = prefs.numPeople;
+        _prefControllers = List.generate(
+          prefs.numPeople,
+          (i) => TextEditingController(
+              text: i < prefs.peoplePreferences.length
+                  ? prefs.peoplePreferences[i]
+                  : ''),
+        );
+        _selectedCards
+          ..clear()
+          ..addAll(prefs.bankCards);
+      }
       for (final p in kAllProviders) {
         _keyControllers[p]!.text = keys[p] ?? '';
+      }
+    });
+  }
+
+  void _setPeopleCount(int count) {
+    setState(() {
+      _numPeople = count;
+      while (_prefControllers.length < count) {
+        _prefControllers.add(TextEditingController());
+      }
+      while (_prefControllers.length > count) {
+        _prefControllers.removeLast().dispose();
       }
     });
   }
@@ -65,13 +101,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _save() async {
     setState(() => _saving = true);
 
-    // Save all non-empty keys.
     for (final p in kAllProviders) {
       final val = _keyControllers[p]!.text.trim();
       if (val.isNotEmpty) await LlmService.saveApiKey(p, val);
     }
 
-    // AI mode is only valid when the chosen provider has a key.
     var modeToSave = _recMode;
     if (modeToSave == kRecModeAi &&
         _keyControllers[_provider]!.text.trim().isEmpty) {
@@ -82,15 +116,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await sp.setString(kRecModeKey, modeToSave);
     await LlmService.setProvider(_provider);
 
-    if (_prefs != null && mounted) {
-      await context.read<PreferencesDao>().save(_prefs!.copyWith(
-            homeAddress: _homeController.text.trim().isEmpty
-                ? null
-                : _homeController.text.trim(),
-            workAddress: _workController.text.trim().isEmpty
-                ? null
-                : _workController.text.trim(),
-          ));
+    if (mounted) {
+      final newPrefs = Preference(
+        dietType: _dietType,
+        numPeople: _numPeople,
+        peoplePreferences: _prefControllers.map((c) => c.text.trim()).toList(),
+        bankCards: _selectedCards.toList(),
+      );
+      await context.read<PreferencesDao>().save(newPrefs);
     }
 
     if (mounted) {
@@ -98,20 +131,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _saving = false;
         _recMode = modeToSave;
       });
-      final msg = modeToSave != _recMode
-          ? 'Saved. AI mode needs an API key — using Static mode.'
-          : 'Settings saved';
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(msg)));
+          .showSnackBar(const SnackBar(content: Text('Settings saved')));
       Navigator.pop(context);
     }
   }
 
   @override
   void dispose() {
-    _homeController.dispose();
-    _workController.dispose();
     for (final c in _keyControllers.values) {
+      c.dispose();
+    }
+    for (final c in _prefControllers) {
       c.dispose();
     }
     super.dispose();
@@ -138,7 +169,82 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // ── Who's ordering ───────────────────────────────────────────────
+          Text('Who\'s ordering', style: theme.textTheme.titleSmall),
+          const SizedBox(height: 12),
+          Text('Food type', style: theme.textTheme.labelMedium),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _dietOptions.map((d) => ChoiceChip(
+              label: Text(_dietLabels[d]!),
+              selected: _dietType == d,
+              onSelected: (_) => setState(() => _dietType = d),
+            )).toList(),
+          ),
+          const SizedBox(height: 20),
+          Text('People ordering', style: theme.textTheme.labelMedium),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              IconButton.outlined(
+                onPressed: _numPeople > 1 ? () => _setPeopleCount(_numPeople - 1) : null,
+                icon: const Icon(Icons.remove),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text('$_numPeople', style: theme.textTheme.titleLarge),
+              ),
+              IconButton.outlined(
+                onPressed: _numPeople < 8 ? () => _setPeopleCount(_numPeople + 1) : null,
+                icon: const Icon(Icons.add),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          for (int i = 0; i < _numPeople; i++) ...[
+            TextField(
+              controller: _prefControllers[i],
+              decoration: InputDecoration(
+                labelText: _numPeople == 1 ? 'Your preference (optional)' : 'Person ${i + 1} (optional)',
+                hintText: 'e.g. loves biryani, no egg',
+                border: const OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+            if (i < _numPeople - 1) const SizedBox(height: 10),
+          ],
+
+          // ── Bank cards ───────────────────────────────────────────────────
+          const SizedBox(height: 24),
+          Text('Credit / debit cards', style: theme.textTheme.titleSmall),
+          const SizedBox(height: 4),
+          Text(
+            'foodwise highlights bank-specific coupons for your cards.',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _bankOptions.map((bank) {
+              final selected = _selectedCards.contains(bank);
+              return FilterChip(
+                label: Text(bank),
+                selected: selected,
+                onSelected: (_) => setState(() {
+                  selected
+                      ? _selectedCards.remove(bank)
+                      : _selectedCards.add(bank);
+                }),
+              );
+            }).toList(),
+          ),
+
           // ── Recommendation mode ──────────────────────────────────────────
+          const SizedBox(height: 28),
           Text('Recommendation engine', style: theme.textTheme.titleSmall),
           const SizedBox(height: 8),
           SegmentedButton<String>(
@@ -203,30 +309,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
             for (final p in kAllProviders) _buildKeyField(theme, p),
           ],
 
-          // ── Delivery addresses ───────────────────────────────────────────
+          // ── Coupons ──────────────────────────────────────────────────────
           const SizedBox(height: 24),
-          Text('Delivery addresses', style: theme.textTheme.titleSmall),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _homeController,
-            decoration: const InputDecoration(
-              labelText: 'Home address',
-              prefixIcon: Icon(Icons.home_outlined),
-              border: OutlineInputBorder(),
-            ),
+          Text('Coupons', style: theme.textTheme.titleSmall),
+          const SizedBox(height: 4),
+          Text(
+            'foodwise auto-reads coupons while scraping. '
+            'Add any from promo emails or SMS here.',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _workController,
-            decoration: const InputDecoration(
-              labelText: 'Work address',
-              prefixIcon: Icon(Icons.work_outline),
-              border: OutlineInputBorder(),
+          const SizedBox(height: 8),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.discount_outlined),
+            title: const Text('Manage coupons'),
+            subtitle: const Text('View, add, or delete stored coupon codes'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const CouponsScreen()),
             ),
           ),
 
           // ── Order history import ─────────────────────────────────────────
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
           Text('Order history', style: theme.textTheme.titleSmall),
           const SizedBox(height: 8),
           ListTile(
@@ -256,7 +363,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           labelText: kProviderLabels[provider],
           hintText: kProviderKeyHints[provider],
           border: const OutlineInputBorder(),
-          // Highlight the active provider's field.
           enabledBorder: isActive
               ? OutlineInputBorder(
                   borderSide: BorderSide(

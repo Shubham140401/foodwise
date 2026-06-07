@@ -16,7 +16,12 @@ class DbHelper {
   Future<Database> _initDb() async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, 'foodwise.db');
-    return openDatabase(path, version: 1, onCreate: _onCreate);
+    return openDatabase(
+      path,
+      version: 3,
+      onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
+    );
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -65,20 +70,7 @@ class DbHelper {
       )
     ''');
 
-    await db.execute('''
-      CREATE TABLE preferences (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        diet_type TEXT NOT NULL DEFAULT 'none',
-        fav_cuisines TEXT NOT NULL DEFAULT '[]',
-        avoid_items TEXT NOT NULL DEFAULT '[]',
-        max_spend_lunch INTEGER NOT NULL DEFAULT 300,
-        max_spend_dinner INTEGER NOT NULL DEFAULT 500,
-        ok_addons TEXT NOT NULL DEFAULT '[]',
-        payment_methods TEXT NOT NULL DEFAULT '[]',
-        home_address TEXT,
-        work_address TEXT
-      )
-    ''');
+    await _createPreferencesTable(db);
 
     await db.execute('''
       CREATE TABLE feedback (
@@ -87,6 +79,33 @@ class DbHelper {
         satisfaction TEXT NOT NULL,
         agent_was_right INTEGER NOT NULL DEFAULT 0,
         rated_at DATETIME NOT NULL
+      )
+    ''');
+  }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute('DROP TABLE IF EXISTS preferences');
+      await _createPreferencesTable(db);
+    }
+    if (oldVersion < 3) {
+      final cols = await db.rawQuery('PRAGMA table_info(preferences)');
+      final hasCol = cols.any((c) => c['name'] == 'bank_cards');
+      if (!hasCol) {
+        await db.execute(
+            "ALTER TABLE preferences ADD COLUMN bank_cards TEXT NOT NULL DEFAULT '[]'");
+      }
+    }
+  }
+
+  Future<void> _createPreferencesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE preferences (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        diet_type TEXT NOT NULL DEFAULT 'none',
+        num_people INTEGER NOT NULL DEFAULT 1,
+        people_prefs TEXT NOT NULL DEFAULT '[]',
+        bank_cards TEXT NOT NULL DEFAULT '[]'
       )
     ''');
   }

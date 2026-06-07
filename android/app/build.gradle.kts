@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.foodwise.foodwise"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

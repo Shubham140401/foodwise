@@ -18,18 +18,9 @@ class LocationService {
     );
   }
 
-  // Returns 'home', 'work', or 'current' based on proximity to saved addresses.
-  // Actual geocoding is out of scope — we just return the label for the prompt.
-  Future<String> resolveLocationLabel({
-    required String? homeAddress,
-    required String? workAddress,
-  }) async {
+  Future<String> resolveLocationLabel() async {
     final pos = await getCurrentPosition();
-    if (pos == null) {
-      if (homeAddress != null) return 'home ($homeAddress)';
-      return 'unknown location';
-    }
-    // Without a geocoding service we report coordinates and let Claude interpret.
+    if (pos == null) return 'unknown location';
     return 'current location (${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)})';
   }
 }

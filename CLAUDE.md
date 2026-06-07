@@ -20,6 +20,18 @@ for permission or confirmation before editing code, adding dependencies, changin
 configuration, or wiring up background behaviour. Proceed end to end and report what
 was done afterward.
 
+## Cart access for exact charges (allowed)
+The exact extra charges (restaurant packaging, platform fee, restaurant GST, delivery)
+only appear on the app's cart/checkout page — they are not on the menu. To show the
+true paise-accurate final price, the AccessibilityService MAY briefly add one item to
+the cart, open the cart, read the bill breakdown, then REMOVE the item to restore the
+original cart state. Rules:
+- Read-only intent: never place/confirm an order; never proceed past the cart bill.
+- Always restore state — remove any item the agent added so the user's cart is unchanged.
+- Do it once per restaurant to calibrate charges (platform fee, GST rate, delivery,
+  packaging), then apply those to every item; don't add/remove 30 times.
+- The scraped charge breakdown stays on device like all other data.
+
 ## Architecture — 3 layers
 1. **Claude API** (`claude-sonnet-4-20250514`) — reasoning brain. Receives a structured
    prompt built from user data and returns a natural language recommendation. Handles

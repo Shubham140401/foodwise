@@ -1,13 +1,17 @@
+import 'dart:convert';
+
 import '../models/coupon.dart';
+import '../models/food_item.dart';
 import '../models/order.dart';
 import '../models/preference.dart';
+import '../services/accessibility_service.dart';
 import 'llm_service.dart';
 import 'rule_engine.dart';
 
 const _systemPrompt =
-    'You are a personal food ordering agent. Be concise. '
-    'One recommendation. Show true final price always. '
-    'Never suggest items the user dislikes.';
+    'You are a personal food ordering agent. Be concise and specific. '
+    'Always show true final prices including delivery fee. '
+    'Respond ONLY with a valid JSON array — no markdown, no explanation.';
 
 class ClaudeService {
   final RuleEngine _ruleEngine;
@@ -15,127 +19,173 @@ class ClaudeService {
 
   ClaudeService(this._ruleEngine) : _llm = LlmService();
 
-  // True when the active provider has a key — used to decide AI vs Static mode.
   Future<bool> hasApiKey() => LlmService.hasActiveKey();
 
-  Future<String> getRecommendation({
+  /// Returns up to 10 ranked [FoodItem] recommendations.
+  /// [query] is what the user said they want today (e.g. "non-veg biryani").
+  Future<List<FoodItem>> getFoodRecommendations({
+    required String query,
     required Preference prefs,
     required List<Order> recentOrders,
     required List<Coupon> activeCoupons,
     required List<String> badRestaurants,
     required int totalFoodAppMins,
     required String locationLabel,
-    required Map<String, int> cartEstimates,
-    required Map<String, int> deliveryFees,
-    required Map<String, int> platformFees,
-    Map<String, List<String>> liveBanners = const {},
-    List<String> liveCouponCodes = const [],
+    required Map<String, AppLiveData> liveData,
   }) async {
     final signal = _ruleEngine.scoreIntent(totalFoodAppMins);
     final signalLabel = _ruleEngine.intentLabel(signal);
     final meal = _ruleEngine.mealType();
-    final budget = _ruleEngine.maxBudget(prefs);
-
-    final deals = <DealResult>[];
-    for (final app in ['Swiggy', 'Zomato', 'Blinkit']) {
-      deals.add(_ruleEngine.bestDeal(
-        app: app,
-        baseCart: cartEstimates[app] ?? 300,
-        deliveryFee: deliveryFees[app] ?? 40,
-        platformFee: platformFees[app] ?? 10,
-        coupons: activeCoupons.where((c) => c.app == app).toList(),
-        okAddons: prefs.okAddons,
-      ));
-    }
-    final ranked = _ruleEngine.rankDeals(deals);
+    final budget = _ruleEngine.maxBudget(recentOrders);
 
     final userPrompt = _buildPrompt(
+      query: query,
       prefs: prefs,
       meal: meal,
       budget: budget,
       signalLabel: signalLabel,
       totalMins: totalFoodAppMins,
       locationLabel: locationLabel,
-      ranked: ranked,
-      topCuisines: _topCuisines(recentOrders),
-      recentRestaurants:
-          recentOrders.take(5).map((o) => o.restaurant).toSet().toList(),
+      liveData: liveData,
+      activeCoupons: activeCoupons,
+      topRestaurants: _topRestaurants(recentOrders),
       badRestaurants: badRestaurants,
-      signal: signal,
-      liveBanners: liveBanners,
-      liveCouponCodes: liveCouponCodes,
+      bankCards: prefs.bankCards,
     );
 
-    return _llm.complete(_systemPrompt, userPrompt);
+    final raw = await _llm.complete(_systemPrompt, userPrompt);
+    return _parseFoodItems(raw, liveData, activeCoupons);
   }
 
   String _buildPrompt({
+    required String query,
     required Preference prefs,
     required String meal,
     required int budget,
     required String signalLabel,
     required int totalMins,
     required String locationLabel,
-    required List<DealResult> ranked,
-    required List<String> topCuisines,
-    required List<String> recentRestaurants,
+    required Map<String, AppLiveData> liveData,
+    required List<Coupon> activeCoupons,
+    required List<String> topRestaurants,
     required List<String> badRestaurants,
-    required IntentSignal signal,
-    Map<String, List<String>> liveBanners = const {},
-    List<String> liveCouponCodes = const [],
+    required List<String> bankCards,
   }) {
-    final dealsBlock = ranked.map((d) {
-      final couponInfo = d.bestCoupon != null
-          ? 'coupon ${d.bestCoupon!.code} saves ₹${d.discount}'
-          : 'no coupon';
-      final addon = d.addonSuggestion != null ? ' | ${d.addonSuggestion}' : '';
-      return '  ${d.app}: ₹${d.finalPrice} final ($couponInfo)$addon';
-    }).join('\n');
+    // Build scraped food items block
+    final scrapedBlock = liveData.entries.map((e) {
+      final app = e.key;
+      final data = e.value;
+      if (data.foodItems.isEmpty && data.restaurants.isEmpty) {
+        return '$app: no live data';
+      }
+      final items = data.foodItems.isNotEmpty
+          ? data.foodItems
+              .map((f) =>
+                  '  ${f.name} @ ${f.restaurant}: ₹${f.price}, ${f.deliveryTime}, '
+                  '${f.deliveryFee > 0 ? "₹${f.deliveryFee} delivery" : "free delivery"}'
+                  '${f.rating.isNotEmpty ? ", ⭐${f.rating}" : ""}')
+              .join('\n')
+          : data.restaurants
+              .map((r) =>
+                  '  ${r.name}: ₹${r.deliveryFee} delivery, ${r.deliveryTime}'
+                  '${r.discount.isNotEmpty ? ", ${r.discount}" : ""}')
+              .join('\n');
+      return '$app:\n$items';
+    }).join('\n\n');
 
-    final taskInstruction = signal == IntentSignal.decisionFatigue
-        ? 'User is fatigued. Give ONE clear option only, no alternatives.'
-        : signal == IntentSignal.lowIntent
-            ? 'User may not be ordering. Be passive, just surface the best deal briefly.'
-            : 'Recommend the best deal. Show savings vs second-best option.';
+    final couponsBlock = activeCoupons.isEmpty
+        ? 'None stored'
+        : activeCoupons
+            .map((c) =>
+                '${c.app} ${c.code}: '
+                '${c.flatDiscount > 0 ? "₹${c.flatDiscount} off" : "${c.discountPct}% off"} '
+                'on min cart ₹${c.minCart}')
+            .join(', ');
+
+    final bankBlock = bankCards.isEmpty
+        ? 'None specified'
+        : bankCards.join(', ');
+
+    final peopleBlock = prefs.numPeople == 1
+        ? prefs.peoplePreferences.isNotEmpty
+            ? prefs.peoplePreferences.first
+            : 'no specific preference'
+        : List.generate(prefs.numPeople, (i) {
+            final p = i < prefs.peoplePreferences.length
+                ? prefs.peoplePreferences[i]
+                : 'no preference';
+            return 'Person ${i + 1}: $p';
+          }).join(', ');
 
     return '''
-[USER PREFERENCES]
-Diet: ${prefs.dietType}
-Favourite cuisines: ${prefs.favCuisines.join(', ')}
-Avoid items: ${prefs.avoidItems.join(', ')}
-Budget for $meal: ₹$budget
-OK add-ons: ${prefs.okAddons.join(', ')}
-Payment methods: ${prefs.paymentMethods.join(', ')}
+[WHAT USER WANTS TODAY]
+"$query"
+Diet: ${prefs.dietType} | People: ${prefs.numPeople} ($peopleBlock)
+Meal: $meal | Budget: ₹$budget | Intent: $signalLabel ($totalMins mins on food apps)
+Location: $locationLabel
 
-[TODAY BEHAVIOUR]
-Time: $meal | Intent signal: $signalLabel ($totalMins mins on food apps today)
-Delivery location: $locationLabel
+[LIVE SCRAPED DATA FROM APPS]
+$scrapedBlock
 
-[AVAILABLE DEALS]
-$dealsBlock
+[ACTIVE COUPONS]
+$couponsBlock
+Scraped banners may also contain bank-specific offers — user has these cards: $bankBlock
 
-[ORDER HISTORY SIGNAL]
-Top cuisines ordered: ${topCuisines.join(', ')}
-Recently visited: ${recentRestaurants.join(', ')}
-Bad-rated restaurants to avoid: ${badRestaurants.join(', ')}
-
-[LIVE SCREEN DATA]
-${liveBanners.isEmpty ? 'No live data available.' : liveBanners.entries.map((e) => '${e.key} banners: ${e.value.join(" | ")}').join('\n')}
-${liveCouponCodes.isEmpty ? '' : 'Spotted coupon codes: ${liveCouponCodes.join(', ')}'}
+[ORDER HISTORY]
+Frequently orders from: ${topRestaurants.join(', ')}
+Avoid (bad rated): ${badRestaurants.join(', ')}
 
 [TASK]
-$taskInstruction
-Show true final price. Max 3 sentences.
+Return a JSON array of up to 10 food items the user should order today based on their query "$query".
+Each element must have exactly these fields:
+{
+  "name": "dish name",
+  "restaurant": "restaurant name",
+  "platform": "Swiggy" or "Zomato" or "Blinkit",
+  "price": integer (base price in rupees),
+  "final_price": integer (after coupon + delivery fee),
+  "discount": integer (rupees saved by coupon, 0 if none),
+  "coupon_code": "CODE" or null,
+  "delivery_fee": integer,
+  "delivery_time": "25-35 min",
+  "rating": "4.2" or "",
+  "addon_suggestion": "Add X for ₹Y to unlock COUPON saving ₹Z net" or null,
+  "reason": "one short phrase why this is a good pick for them"
+}
+Sort by best value (lowest final_price, weighted by rating and history match).
+If live scraped data is available use those exact prices. If not, use reasonable estimates.
+Return ONLY the JSON array. No markdown. No explanation.
 ''';
   }
 
-  List<String> _topCuisines(List<Order> orders) {
+  List<FoodItem> _parseFoodItems(
+    String raw,
+    Map<String, AppLiveData> liveData,
+    List<Coupon> activeCoupons,
+  ) {
+    try {
+      // Strip markdown code fences if Claude wrapped it
+      var cleaned = raw.trim();
+      if (cleaned.startsWith('```')) {
+        cleaned = cleaned.replaceAll(RegExp(r'```[a-z]*'), '').trim();
+      }
+      final list = jsonDecode(cleaned) as List<dynamic>;
+      return list
+          .map((e) => FoodItem.fromMap(Map<String, dynamic>.from(e as Map)))
+          .take(10)
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  List<String> _topRestaurants(List<Order> orders) {
     final counts = <String, int>{};
     for (final o in orders) {
       counts[o.restaurant] = (counts[o.restaurant] ?? 0) + 1;
     }
     final sorted = counts.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
-    return sorted.take(3).map((e) => e.key).toList();
+    return sorted.take(5).map((e) => e.key).toList();
   }
 }

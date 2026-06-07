@@ -5,7 +5,8 @@
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
     android:canRetrieveWindowContent="true"
+    android:canPerformGestures="true"
     android:description="@string/accessibility_service_description"
     android:notificationTimeout="500"
-    android:packageNames="in.swiggy.android,com.application.zomato,com.blinkit.consumer"
+    android:packageNames="in.swiggy.android,com.application.zomato"
     android:settingsActivity="com.foodwise.foodwise.MainActivity" />
